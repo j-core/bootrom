@@ -1,6 +1,18 @@
 #ifndef __SPI_H__
 #define __SPI_H__
 
+/* These are the bit field of Spi_Ctrl register */
+#define SpiCtrl_ACS	0x01 	/* chipselect for applcation data */
+#define SpiCtrl_CCS	0x04	/* chipselect for FPGA configure */
+#define SpiCtrl_DCS	0x10	/* chipselect for D2A or extra SPI device */
+#define SpiCtrl_setDiv(x) ((x) << 27)	/* Div contrl SPI_CK = 12.5/(div + 1), Min: 400KHz for now*/
+#define SpiCtrl_Xmit	0x02
+#define SpiCtrl_Busy	0x02
+#define SpiCtrl_Loop	0x08	/* When it assert, mosi will connect to miso */
+/* by default SPI run at 12.5 MHz,maxium speed for Spartan 3E, for SPI Flash
+ * We need a DDS delay for different devices
+ */
+
 /* TODO: how to implement this offset change */
 /* Digilent 1600E: only have SpiData_Chip, offset 0
  * SGM100	SpiData_Chip offset 0

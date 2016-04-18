@@ -1,7 +1,7 @@
 #include "lcd.h"
 #include "board.h"
 
-#define PORT (*(volatile unsigned *)sys_PIO_BASE)
+#define PORT (DEVICE_GPIO->value)
 #define SDA 0x00000001
 #define SCL 0x00000002
 #define ID 0x7c

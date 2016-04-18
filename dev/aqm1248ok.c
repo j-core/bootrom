@@ -26,7 +26,7 @@ typedef  unsigned  char  BYTE;
 #define DATA		0
 
 #include "board.h"
-#define PORT (*(volatile unsigned *)sys_PIO_BASE)
+#define PORT (DEVICE_GPIO->value)
 
 //****************************************
 //  SPIマスタ初期化(MSSP使用)

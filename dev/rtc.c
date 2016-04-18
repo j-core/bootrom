@@ -2,24 +2,32 @@
 
 #include "board.h"
 
-#define READ_MEM(A) (*(volatile unsigned int*)(A))
-
-#define SEC_HI READ_MEM(sys_SYS_BASE + Sys_RTCSecM)
-#define SEC_LO READ_MEM(sys_SYS_BASE + Sys_RTCSecL)
-
 void rtc_get_seconds(unsigned int *hi, unsigned int *lo) {
   unsigned int t;
-  *hi = SEC_HI;
-  *lo = SEC_LO;
-  t = SEC_HI;
+  *hi = DEVICE_AIC0->rtc_sec_hi;
+  *lo = DEVICE_AIC0->rtc_sec_lo;
+  t = DEVICE_AIC0->rtc_sec_hi;
   if (t != *hi) {
     /* High seconds rolled over, potentially between hi read and low
        read. Reread lo to get consistent reading. It can't have
        rolled over again yet. */
-    *lo = SEC_LO;
+    *lo = DEVICE_AIC0->rtc_sec_lo;
   }
 }
 
 unsigned int rtc_get_seconds_lo() {
-  return SEC_LO;
+  return DEVICE_AIC0->rtc_sec_lo;
+}
+
+void rtc_get_time(unsigned int *sec, unsigned int *nsec) {
+  unsigned int t;
+  *sec = DEVICE_AIC0->rtc_sec_lo;
+  *nsec = DEVICE_AIC0->rtc_nsec;
+  t = DEVICE_AIC0->rtc_sec_lo;
+  if (t != *sec) {
+    /* Low seconds rolled over, potentially between sec read and nsec
+       read. Reread sec to get consistent reading. It can't have
+       rolled over again yet. */
+    *nsec = DEVICE_AIC0->rtc_nsec;
+  }
 }

@@ -15,16 +15,13 @@ CONFIG_BOOT0=1
 CONFIG_CPU_TESTS=1
 CONFIG_GDB_STUB=1
 CONFIG_LOAD_ELF=1
-CONFIG_TFTP=0
+CONFIG_LOAD_ELF_TIME=0
 CONFIG_OLDLCD=0
 CONFIG_GRLCD=1
-CONFIG_GRLCD_FLIP=0
 CONFIG_LCD_LOGO=1
 CONFIG_KEYS=0
 CONFIG_SDCARD=1
 CONFIG_SPIFLASH=0
-CONFIG_DESCRIPTION_TABLE=1
-CONFIG_GPS_ROLLOVER_TEST=0
 
 # If CONFIG_GPIO_INIT is 1, then CONFIG_GPIO_INIT_VALUE is
 # assigned to the GPIO register early in the boot
@@ -47,7 +44,17 @@ CONFIG_GDB_IO=UART0
 # CONFIG_LIBC_IO = "UART0", "UART1", or "GDB"
 CONFIG_LIBC_IO=UART0
 
-# Type of DDR. One of "ddr8", "ddr16", or "lpddr". Only used when
+CONFIG_DEVTREE=1
+
+CONFIG_VERSION_DATE=1
+
+# Always safe to enable dcache when DMA is not used. Enabling icache
+# requires kernel is aware of caches so it will invalidate icache
+# after loading code
+CONFIG_ENABLE_DCACHE=1
+CONFIG_ENABLE_ICACHE=0
+
+# Type of DDR. One of "ddr8", "ddr16", "lpddr", "lpddr2". Only used when
 # BOOT0=1 to initialize the DDR.
 DDR_TYPE=ddr16
 
@@ -96,16 +103,18 @@ $(error LCD_LOGO is only supported when GRLCD is enabled)
 	endif
 endif
 
+CROSS_COMPILE ?= sh2-elf-
 
-CC = sh2-elf-gcc
-LD = sh2-elf-ld
-AR = sh2-elf-ar
-RANLIB = sh2-elf-ranlib
+CC = $(CROSS_COMPILE)gcc
+LD = $(CROSS_COMPILE)ld
+AR = $(CROSS_COMPILE)ar
+RANLIB = $(CROSS_COMPILE)ranlib
 LDFLAGS = -T linker/sh32.x
 LIBGCC := $(shell $(CC) -print-libgcc-file-name)
 LIBGCC += $(shell $(CC) -print-file-name=libgcc-Os-4-200.a)
 
 CFLAGS := -m2 -g -Os -Wall -Werror
+CFLAGS += -std=gnu99
 # Pass CONFIG_ variables to C
 CONF_VARS:=$(filter CONFIG_%,$(.VARIABLES))
 
@@ -131,9 +140,12 @@ endif
 
 CFLAGS += $(CFLAGS_CONFIG)
 CFLAGS += -Iinclude
+CFLAGS += $(EXTRA_CFLAGS)
 
 ifeq ($(DDR_TYPE),lpddr)
 	CFLAGS += -DLPDDR
+else ifeq ($(DDR_TYPE),lpddr2)
+	CFLAGS += -DLPDDR -DLPDDR2
 else ifeq ($(DDR_TYPE),ddr8)
 	CFLAGS += -DDDR_BL4
 else ifeq ($(DDR_TYPE),ddr16)
@@ -207,9 +219,6 @@ endif
 ifneq ($(CONFIG_TEST_MEM),0)
 	NEED_LIBC := 1
 endif
-ifneq ($(CONFIG_GPS_ROLLOVER_TEST),0)
-	NEED_LIBC := 1
-endif
 ifeq ($(NEED_LIBC),1)
 	ifneq ($(CONFIG_LIBC_IO),GDB)
 # libc needs UART unless using GDB stub for IO
@@ -243,9 +252,6 @@ DEV_OBJS := $(addprefix dev/,$(DEV_OBJS))
 OBJS := main.o
 OBJS += version.o
 OBJS += entry.o
-ifeq ($(CONFIG_DESCRIPTION_TABLE),1)
-	OBJS += hw_desc_table.o
-endif
 ifeq ($(CONFIG_GDB_STUB),1)
 	OBJS += $(GDB_OBJS)
 	CFLAGS += -Igdb
@@ -291,15 +297,23 @@ bin/lcdtest: dev/aqm1248ok.o libc/libsyscall.o lcdtest.o | bin
 # This REVISION value is usually passed in from the soc_hw Makefile so
 # that the tag and commit ID are from soc_hw. Set a default value here
 # that uses the boot repo's values.
-REVISION=$(shell hg log -r . --template "{latesttag}-{latesttagdistance}-{node|short}")
+REVISION="open"
+
+VERSION_STRING:=revision: $(REVISION)\\\\n
+ifeq ($(CONFIG_VERSION_DATE),1)
+VERSION_STRING:=$(VERSION_STRING)build: $(shell date)\\\\n
+endif
 
 version.c:
-	@printf "char version_string[] = \"revision: $(REVISION)\\\\nbuild: $(shell date)\\\\n\";\n" > $@
+	@printf "char version_string[] = \"$(VERSION_STRING)\";\n" > $@
+
+#version.c:
+#	@printf "char version_string[] = \"revision: $(REVISION)\\\\nbuild: $(shell date)\\\\n\";\n" > $@
 
 # store the configuration in a file that is updated only when the
 # contents change to force a recompliation
 config.log: force
-	@echo '$(CFLAGS)' | cmp -s - $@ || echo '$(CFLAGS)' > $@
+	@echo '$(CFLAGS) CROSS_COMPILE=$(CROSS_COMPILE)' | cmp -s - $@ || echo '$(CFLAGS) CROSS_COMPILE=$(CROSS_COMPILE)' > $@
 
 # create empty directories that are deleted by clean
 bin:

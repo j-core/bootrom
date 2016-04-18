@@ -82,12 +82,42 @@ void devdbg(const char *fmt, ...) {}
 static
 void rcvr_spi_multi (
 	BYTE *buff,		/* Pointer to data buffer */
-	UINT btr		/* Number of bytes to receive */
+	UINT ignore_start,	/* Number of initial bytes to ignore */
+	UINT n,			/* Number of bytes to receive */
+	UINT ignore_end		/* Number of final bytes to receive */
 )
 {
-	do {
+	unsigned int d;
+	while (ignore_start--){
+		xronebyte(0xff);
+	}
+
+	for (; (unsigned int)buff % 4 && n; n--) {
 		*buff++ = xronebyte(0xff);
-	} while (--btr);	/* Repeat until all data received */
+	}
+
+	typedef unsigned int __attribute__((__may_alias__)) u32;
+
+	for (; n >= 4; buff += 4, n-=4) {
+		d = xronebyte(0xff);
+		d <<= 8;
+		d |= xronebyte(0xff);
+		d <<= 8;
+		d |= xronebyte(0xff);
+		d <<= 8;
+		d |= xronebyte(0xff);
+		*(u32 *)buff = d;
+	}
+	if (n&2) {
+		*buff++ = xronebyte(0xff);
+		*buff++ = xronebyte(0xff);
+	}
+	if (n&1) {
+		*buff++ = xronebyte(0xff);
+	}
+	while (ignore_end--) {
+		xronebyte(0xff);
+	}
 }
 
 /*-----------------------------------------------------------------------*/
@@ -158,7 +188,9 @@ void power_off (void)	/* Disable SPI function */
 static
 int rcvr_datablock (	/* 1:OK, 0:Error */
 	BYTE *buff,	/* Data buffer */
-	UINT btr	/* Data block length (byte) */
+	UINT ignore_start,	/* Number of initial bytes to ignore */
+	UINT n,				/* Number of bytes to receive */
+	UINT ignore_end		/* Number of final bytes to receive */
 )
 {
 	BYTE token;
@@ -173,7 +205,7 @@ int rcvr_datablock (	/* 1:OK, 0:Error */
 	if(token != 0xFE)
 	       	return 0;	/* Function fails if invalid DataStart token or timeout */
 
-	rcvr_spi_multi(buff, btr);		/* Store trailing data to the buffer */
+	rcvr_spi_multi(buff, ignore_start, n, ignore_end); /* Store trailing data to the buffer */
 	xronebyte(0xff); xronebyte(0xff);	/* Discard CRC */
 
 	return 1;		/* Function succeeded */
@@ -232,14 +264,6 @@ DSTATUS sdc_initialize (void )
 	BYTE n, cmd, ty, ocr[4];
 	UINT count;
 
-#ifdef TestCPU
-	volatile unsigned *ptr;
-	ptr = (volatile unsigned*)sys_PIO_BASE;
-	if(!(*ptr & Pio_SD_CD)) {
-		Stat = STA_NOINIT;
-		return Stat;
-	}
-#endif
 	FCLK_SLOW();						/* Set slow clock */
 	send_cmd(CMD52, 1);	/* Since WatchDog could restart CPU while SD card in unknow state, just make sure SD card in reset mode */
 	for (n = 10; n; n--) xronebyte(0xff);	/* Send 80 dummy clocks */
@@ -339,16 +363,7 @@ DRESULT sdc_readp(
 )
 {
 	WORD total;
-	BYTE buffer[512];
 
-#ifdef TestCPU
-	volatile unsigned *ptr;
-	ptr = (volatile unsigned*)sys_PIO_BASE;
-	if(!(*ptr & Pio_SD_CD)) {
-		Stat = STA_NOINIT;
-		return RES_NOTRDY;
-	}
-#endif
 	if (!bcount) 
 		return RES_PARERR;		/* Check parameter */
 	if (Stat & STA_NOINIT) 
@@ -358,24 +373,15 @@ DRESULT sdc_readp(
 	total = offset + bcount;
 	if(total <= 512) { /* Single sector read */
 		if ((send_cmd(CMD17, sector) == 0)	/* READ_SINGLE_BLOCK */
-			&& rcvr_datablock(&buffer[0], 512)) {
-			for(;bcount;bcount--) {
-				*buff++ = buffer[offset];
-				offset++;
-			}
+			&& rcvr_datablock(buff, offset, bcount, 512 - total)) {
+			bcount = 0;
 		}
 	} else { /* read two blocks */
 		if(send_cmd(CMD18, sector) == 0) {
-			for(total = 2; total; --total) {
-				if(!rcvr_datablock(&buffer[0], 512))
-					break;
-				for(; offset < 512; offset++) {
-					*buff++ = buffer[offset];
-					bcount--;
-					if(!bcount)
-						break;
-				}
-				offset = 0;
+			total -= 512;
+			if (rcvr_datablock(buff, offset, 512-offset, 0) &&
+				rcvr_datablock(buff+512-offset, 0, total, 512 - total)) {
+				bcount = 0;
 			}
 			send_cmd(CMD12, 0);	/* STOP_TRANSMISSION */
 		}

@@ -28,6 +28,7 @@
 #if CONFIG_LCD == 1
 #include "lcd.h"
 #endif
+#include "board.h"
 
 void main_sh();
 
@@ -286,7 +287,7 @@ int gdb_peek_register_file (int id, long* val)
 	return retval;
 	}
 
-#define PORT (*(volatile unsigned long  *)0xabcd0000)
+#define PORT (DEVICE_GPIO->value)
 
 /*
   Stuffs a register value into gdb_register_file.  Returns the size of

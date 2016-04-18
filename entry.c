@@ -16,6 +16,17 @@
   Simple GDB ROM for SH J2 archtecture devices
 */
 
+#if CONFIG_CPU_TESTS == 1
+#include "board.h"
+// to stringify GPIO address
+#define xstr(s) str(s)
+#define str(s) #s
+
+#ifndef DEVICE_GPIO_ADDR
+#error GPIO address is not defined
+#endif
+#endif
+
 #if CONFIG_GDB_STUB == 1
 
 #include "gdb.h"
@@ -123,9 +134,6 @@ __asm__(
 "  .long _gdb_unhandled_isr\n"
 "  .long _gdb_unhandled_isr\n"
 "  .long _gdb_unhandled_isr\n"
-#if CONFIG_DESCRIPTION_TABLE == 1
-"  .long _hw_desc_table\n"
-#endif
 #if CONFIG_CPU_TESTS == 1
 ".section .text\n"
 ".align 2\n"
@@ -242,7 +250,7 @@ __asm__(
 "testdiv_k:    .long _testdiv\n"
 "testmacw_k:   .long _testmacw\n"
 "testmacl_k:   .long _testmacl\n"
-"pio_addr:     .long 0xABCD0000\n"
+"pio_addr:     .long " xstr(DEVICE_GPIO_ADDR) "\n"
 "start_leds:   .long 0x000000ff\n"
 "start1_leds:   .long 0x0000004f\n"
 "jsr_leds:     .long 0x00000011\n"

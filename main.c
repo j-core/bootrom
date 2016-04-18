@@ -1,4 +1,6 @@
 #include "uart.h"
+#include "board.h"
+#include "rtc.h"
 
 #if CONFIG_DDR == 1
 #include "ddr.h"
@@ -19,8 +21,6 @@
 #if CONFIG_GPS_ROLLOVER_TEST == 1
 #include <stdio.h>
 #endif
-
-#define LEDPORT (*(volatile unsigned long  *)0xabcd0000)
 
 #ifndef MEM_TEST_ADDR
 #define MEM_TEST_ADDR 0x10000000
@@ -46,9 +46,43 @@ putstr (char *str)
 }
 
 void
+putuint(unsigned int x)
+{
+  char buf[11];
+  int i = 10;
+  if (x == 0) {
+    uart_tx(0, '0');
+  } else {
+    buf[10] = 0;
+    while (x) {
+      buf[--i] = '0' + (x % 10);
+      x = x / 10;
+    }
+    putstr(buf + i);
+  }
+}
+
+void
+putinterval(unsigned int sec_delta, unsigned int nsec_delta)
+{
+  // nsec_delta = nsec1 - nsec0
+  // so if the nsec wrappped between two measurements, then the
+  // subtraction will underflow. Adjust sec and nsec to normalize the
+  // number of nsecs.
+  if (nsec_delta > 1000000000) {
+    nsec_delta += 1000000000;
+    sec_delta -= 1;
+  }
+  putuint(sec_delta);
+  putstr("s ");
+  putuint(nsec_delta);
+  putstr("ns");
+}
+
+void
 led(int v)
 {
-//  LEDPORT = v;
+//  DEVICE_GPIO->value = v;
 }
 
 #if CONFIG_TEST_MEM == 2
@@ -75,6 +109,97 @@ void memtest2(void) {
 }
 #endif
 
+#if CONFIG_LOAD_ELF == 1
+
+static int boot_linux(void) {
+  FRESULT r;
+  FATFS fs;
+  struct elf_image elf_img;
+  unsigned int dtb_addr;
+  putstr("Booting\n");
+  loadelf_initfs(&fs);
+  r = pf_mount(&fs);
+  if (r != FR_OK) {
+    goto err;
+  }
+  putstr("Storage device initialized\n");
+  lcd_print(1, "Dev init");
+
+  {
+#if CONFIG_LOAD_ELF_TIME == 1
+    unsigned int sec0;
+    unsigned int nsec0;
+    unsigned int sec1;
+    unsigned int nsec1;
+    rtc_get_time(&sec0, &nsec0);
+#endif
+    // load vmlinux ELF binary
+    if (loadelf_load("vmlinux", &elf_img) == -1) {
+      putstr("Probe storage device failed\n");
+      goto err_mnt;
+    }
+#if CONFIG_LOAD_ELF_TIME == 1
+    rtc_get_time(&sec1, &nsec1);
+    putstr("Loaded vmlinux in ");
+    putinterval(sec1 - sec0, nsec1 - nsec0);
+    putstr("\n");
+#endif
+  }
+
+  dtb_addr = (unsigned int) elf_img.max_addr;
+  // round up to align
+  dtb_addr = (dtb_addr + 3) & ~3;
+
+  {
+#if CONFIG_LOAD_ELF_TIME == 1
+    unsigned int sec0;
+    unsigned int nsec0;
+    unsigned int sec1;
+    unsigned int nsec1;
+    rtc_get_time(&sec0, &nsec0);
+#endif
+    // load device tree DTB file
+    if (load_dtb("dt.dtb", (void *) dtb_addr, 20 * 1024) == 0) {
+#if CONFIG_LOAD_ELF_TIME == 1
+      rtc_get_time(&sec1, &nsec1);
+      putstr("Loaded dt.dtb in ");
+      putinterval(sec1 - sec0, nsec1 - nsec0);
+      putstr("\n");
+#endif
+    } else {
+      dtb_addr = 0;
+    }
+  }
+
+  pf_mount(0); // unmount
+
+  putstr("RUN program\n");
+#if CONFIG_LCD_LOGO == 1
+  lcd_logo_draw();
+#else
+  lcd_print(0, "Loaded  ");
+  lcd_print(1, "Booting ");
+#endif
+
+  elf_img.entry((void *) dtb_addr);
+
+  // should not reach here
+  putstr("Loaded program has ended!\n");
+  lcd_clear();
+  lcd_print(0, "Pgm exit");
+
+  return 0;
+ err_mnt:
+  pf_mount(0);
+ err:
+  putstr("\nRun elf FAILED.\n");
+  lcd_clear();
+  lcd_print(0, "Pgm load");
+  lcd_print(1, "Failed");
+  return -1;
+}
+#endif
+
 void
 main_sh (void)
 {
@@ -83,19 +208,6 @@ main_sh (void)
   lcd_init();
   lcd_clear();
 
-#if CONFIG_GPS_ROLLOVER_TEST == 1
-#define PPSTIME_BASE 0xabcd0030
-#define PPSTIME_STATUS_CTRL_REG ((volatile unsigned int *) (PPSTIME_BASE + 0))
-#define PPSTIME_SEC_LO_REG      ((volatile unsigned int *) (PPSTIME_BASE + 4))
-#define PPSTIME_NSEC_REG        ((volatile unsigned int *) (PPSTIME_BASE + 8))
-  while (1) {
-    char s[100];
-    if (*PPSTIME_STATUS_CTRL_REG) {
-      sprintf(s, "%u s %u ns\n", *PPSTIME_SEC_LO_REG, *PPSTIME_NSEC_REG);
-      putstr(s);
-    }
-  }
-#endif
 
   /* Ensure DDR is initialized before the gdb stub startup to allow
      programs to be loaded into DDR by GDB. */
@@ -104,8 +216,13 @@ main_sh (void)
   led(0x041);
 #endif
 
+#ifdef DEVICE_CACHE_CTRL
+  // enable cpu0's caches
+  DEVICE_CACHE_CTRL->ctrl0 = (CONFIG_ENABLE_DCACHE << 1) | CONFIG_ENABLE_ICACHE;
+#endif
+
 #if CONFIG_GPIO_INIT == 1
-  LEDPORT = CONFIG_GPIO_INIT_VALUE;
+  DEVICE_GPIO->value = CONFIG_GPIO_INIT_VALUE;
 #endif
 
 #if CONFIG_GDB_STUB == 1
@@ -166,12 +283,6 @@ main_sh (void)
   led(0x50);
 
 #if CONFIG_LOAD_ELF == 1
-  putstr("Booting\n");
-  if (loadelf_load("vmlinux") == -1) {
-    putstr("\nRun elf FAILED.\n");
-    lcd_clear();
-    lcd_print(0, "Pgm load");
-    lcd_print(1, "Failed");
-  }
+  boot_linux();
 #endif
 }

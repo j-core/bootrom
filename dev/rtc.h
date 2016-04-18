@@ -7,4 +7,7 @@ void rtc_get_seconds(unsigned int *hi, unsigned int *lo);
 
 unsigned int rtc_get_seconds_lo();
 
+/* Reads low seconds and nsec counters */
+void rtc_get_time(unsigned int *sec, unsigned int *nsec);
+
 #endif

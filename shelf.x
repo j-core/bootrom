@@ -3,7 +3,6 @@ OUTPUT_FORMAT("elf32-sh", "elf32-sh",
 	      "elf32-sh")
 OUTPUT_ARCH(sh)
 ENTRY(start)
-SEARCH_DIR("/opt/toolchains/SH2/sh2-elf/lib");
 SECTIONS
 {
   /* Read-only sections, merged into text segment: */

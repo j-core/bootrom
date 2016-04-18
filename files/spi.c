@@ -8,8 +8,8 @@
 #define SPI_READ	0x03
 #define SPI_FAST_READ	0x0B
 
-#define SPIDATA	(*(volatile unsigned*)(sys_SPI_BASE + Spi_Data))
-#define SPICTL	(*(volatile unsigned*)(sys_SPI_BASE + Spi_Ctrl))
+#define SPIDATA	(DEVICE_FLASH->data)
+#define SPICTL	(DEVICE_FLASH->ctrl)
 
 static unsigned chipselect_status;
 static unsigned spi_speed;

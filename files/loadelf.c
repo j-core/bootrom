@@ -10,25 +10,6 @@
 
 extern void putstr(char *str);
 
-static FRESULT
-try_open(char *fn, DSTATUS(*init) (void), DRESULT(*readp) (BYTE *, DWORD, WORD, WORD), DRESULT(*writep) (const BYTE *, DWORD), FATFS * fsp)
-{
-  FRESULT res;
-
-  if (!fsp)
-    return FR_NOT_OPENED;
-
-  fsp->ops.disk_initialize = init;
-  fsp->ops.disk_readp = readp;
-  fsp->ops.disk_writep = writep;
-  res = pf_mount(fsp);
-  if (res != FR_OK) {
-    return res;
-  }
-  res = pf_open(fn);
-  return res;
-}
-
 #ifndef NULL
   #define NULL (void*)0
 #endif
@@ -65,11 +46,57 @@ static void report_load_progress(unsigned long progress, unsigned long total) {
        previous printed to lcd */
     lcd_print_at(4 + 8 * 8, 3, str);
   }
+#elif CONFIG_SEVENSEGMENT == 1
+  const static unsigned long numbers[] = {
+    // bits 15-9 control the seven segments of a digit display.
+    // bit 8 is the period after the digit. A 0 bit is on, a 1 bit is on.
+    0x0300,
+    0x9F00,
+    0x2500,
+    0x0D00,
+    0x9900,
+    0x4900,
+    0x4100,
+    0x1F00,
+    0x0100,
+    0x1900,
+
+    0x0000
+  };
+#define GPIO ((volatile unsigned long *)0xabcd0000)
+  unsigned long percent = progress * 100 / total;
+
+  if (percent >= 100) {
+    *GPIO = 0x0FD00; // straight line through all 3
+  } else {
+    if (1) {
+      // draw 10s digit
+      // bits 18-16 select which of the 3 digits to enable, active-low.
+      *GPIO = 0x50000 | numbers[percent / 10];
+    } else {
+      // draw 1s digit
+      *GPIO = 0x60000 | numbers[percent % 10];
+    }
+  }
+#endif
+}
+
+void loadelf_initfs(FATFS *fs) {
+#if CONFIG_SPIFLASH == 1
+  fs->ops.disk_initialize = &spif_initialize;
+  fs->ops.disk_readp = &spif_readp;
+  fs->ops.disk_writep = 0;
+#elif CONFIG_SDCARD == 1
+  fs->ops.disk_initialize = &sdc_initialize;
+  fs->ops.disk_readp = &sdc_readp;
+  fs->ops.disk_writep = 0;
+#else
+#error "No storage device defined"
 #endif
 }
 
 /* Read data in chunks from the storage and report progress */
-unsigned long
+static unsigned long
 read_progress(void *dst, 		/* Pointer to the read buffer */
               unsigned long blength, 	/* Number of bytes to
                                            read */
@@ -99,7 +126,7 @@ read_progress(void *dst, 		/* Pointer to the read buffer */
   return res;
 }
 
-int loadelf_load(char *ch)
+int loadelf_load(char *ch, struct elf_image *img)
 {
   unsigned long i, j;
   struct elf_hdr *ElfHdr = 0;	/*elf header struct  */
@@ -112,17 +139,19 @@ int loadelf_load(char *ch)
   struct elf_phdr *phdr = 0;	/* ELF program Header */
   unsigned char *lptmp;		/* load temp address */
 
-  FATFS fs;
   WORD brs;
   unsigned long br;
   FRESULT res;
-  void (*p) ();			/* running loaded ELF executable program */
 
   /* Need to load portions of the ELF file to read metadata. Where
      should it be loaded? Choose high area of DDR.
      TODO: Read metadata into SRAM (stack?) instead?
   */
   unsigned char *readbuf = (unsigned char *)0x13000000;
+
+  img->entry = 0;
+  img->min_addr = (void *) 0xFFFFFFF0;
+  img->max_addr = (void *) 0;
 
   /* ELF loader */
   /* mount the volume  */
@@ -131,22 +160,12 @@ int loadelf_load(char *ch)
   lcd_print(0, "Pgm load");
   lcd_print(1, ch);
 
-#if CONFIG_SPIFLASH == 1
-  res = try_open(ch, &spif_initialize, &spif_readp, 0, &fs);
-#elif CONFIG_SDCARD == 1
-  res = try_open(ch, &sdc_initialize, &sdc_readp, 0, &fs);
-#else
-#error "No storage device defined"
-#endif
-
+  res = pf_open(ch);
   if (res != FR_OK) {
-	  putstr("Probe storage device failed\n");
-          lcd_print(1, "not fnd ");
-	  return -1;
+    putstr("ELF not found\n");
+    lcd_print(1, "not fnd ");
+    return -1;
   }
-  putstr("Storage device initialized\n");
-  lcd_print(1, "Dev init");
- 
   char str[32]; str[0] = '\0';
   _strcat(str, "Open "); _strcat(str, ch); _strcat(str, " OK");
   _strcat(str, "\n");
@@ -210,6 +229,13 @@ int loadelf_load(char *ch)
     if (phdr->p_type == PT_LOAD) {	/* load  to running address  */
       /* loading  */
       lptmp = (unsigned char *)phdr->p_paddr;	/* assigned physAddr or virtAddr ? */
+      /* update min and max addresses */
+      if (img->min_addr > (void*) lptmp) {
+        img->min_addr = lptmp;
+      }
+      if (img->max_addr < (void*)(lptmp + phdr->p_memsz)) {
+        img->max_addr = lptmp + phdr->p_memsz;
+      }
       if (phdr->p_filesz > 0) {
         pf_lseek(phdr->p_offset);
 
@@ -234,20 +260,50 @@ int loadelf_load(char *ch)
 #endif
     }
   }
-  pf_mount(0);
-  putstr("RUN program\n");
 
-#if CONFIG_LCD_LOGO == 1
-  lcd_logo_draw();
-#else
-  lcd_print(0, "Loaded  ");
-  lcd_print(1, "Booting ");
-#endif
-  p = (void (*)())p_e_entry;
-  p();				/* running loaded ELF executable program */
-  putstr("Loaded program has ended!\n");
-  lcd_clear();
-  lcd_print(0, "Pgm exit");
-
+  img->entry = (void *) p_e_entry;
   return 0;
 }				/* ELF loader  */
+
+int load_dtb(char *name, void *dest, int max_bytes) {
+#if CONFIG_DEVTREE == 1
+  FRESULT res = FR_OK;
+  unsigned int len;
+  unsigned long bytes_read;
+  res = pf_open(name);
+  if (res != FR_OK) {
+    putstr("DTB not found\n");
+    goto err;
+  }
+  char str[32];
+  str[0] = '\0';
+  _strcat(str, "Open "); _strcat(str, name); _strcat(str, " OK");
+  _strcat(str, "\n");
+  putstr(str);
+
+  len = pf_size();
+  if (len > max_bytes || len == 0) {
+    putstr("Invalid DTB length\n");
+    goto err;
+  }
+
+  res = pf_lseek(0);
+  if (res != FR_OK) {
+    putstr("DTB lseek(0) failed");
+    goto err;
+  }
+  res = pf_read_long(dest, len, &bytes_read);
+  if (res != FR_OK) {
+    putstr("DTB read failed");
+    goto err;
+  }
+
+  putstr("Loaded DTB\n");
+  return 0;
+ err:
+  putstr("Failed to load DTB\n");
+  return -1;
+#else
+  return -1;
+#endif
+}

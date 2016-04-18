@@ -33,7 +33,11 @@ int DdrInitData[] = {
   (0x400 << 13) | (0 << 11) | (2 << 4),	//A10=1; PRECHARGE ALL="010"
   (0x000 << 13) | (0 << 11) | (1 << 4),	//AUTO REFRESH="001"
   (0x000 << 13) | (0 << 11) | (1 << 4),	//AUTO REFRESH="001"
+#ifdef LPDDR2
+  (0x031 << 13) | (0 << 11) | (0 << 4),	//SMR CL=2, BL=2; LMR="000"
+#else
   (0x021 << 13) | (0 << 11) | (0 << 4),	//SMR CL=2, BL=2; LMR="000"
+#endif
   (0x000 << 13) | (1 << 11) | (0 << 4),	//EMR BA="01"; LMR="000" Full strength full array
   (0x000 << 13) | (0 << 11) | (7 << 4)	//NOP="111" after ? uS
 #endif
@@ -45,12 +49,12 @@ ddr_init (void)
   volatile int i, j, k = 0;
   for (i = 0; i < sizeof (DdrInitData) / sizeof (int); ++i)
     {
-      MemoryWrite (sys_DDR_BASE + DdrInitData[i], 0);
+      MemoryWrite (DRAM_BASE + DdrInitData[i], 0);
       for (j = 0; j < 4; ++j)
 	++k;
     }
   for (j = 0; j < 100; ++j)
     ++k;
-  k += MemoryRead (sys_DDR_BASE);	//Enable DDR
+  k += MemoryRead (DRAM_BASE);	//Enable DDR
   return k;
 }
