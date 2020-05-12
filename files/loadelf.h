@@ -15,6 +15,6 @@ void loadelf_initfs(FATFS *fs);
 
 int loadelf_load(char *ch, struct elf_image *img);
 
-int load_dtb(char *name, void *dest, int max_bytes);
+int load_open_dtb(void *dest, int max_bytes);
 
 #endif

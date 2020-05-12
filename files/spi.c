@@ -32,12 +32,12 @@ void spi_cs(int chip) {
 	}
 	if(chip) {
 		if(chip == SpiData_Chip) {
-			chipselect_status = spi_speed;
+			chipselect_status = spi_speed | SpiCtrl_CCS | SpiCtrl_DCS;
 		} else if(chip == SpiConf_Chip) {
-			chipselect_status = spi_speed | SpiCtrl_CCS | SpiCtrl_ACS;
+			chipselect_status = spi_speed | SpiCtrl_ACS | SpiCtrl_DCS;
 		}
 	} else
-		chipselect_status = SpiCtrl_ACS;
+		chipselect_status = SpiCtrl_ACS | SpiCtrl_CCS | SpiCtrl_DCS;
 	SPICTL = chipselect_status;
 }
 /* if speed == 0: 400KHz, if speed = true: 12.5 MHz */

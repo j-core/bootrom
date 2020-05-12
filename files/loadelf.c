@@ -265,21 +265,15 @@ int loadelf_load(char *ch, struct elf_image *img)
   return 0;
 }				/* ELF loader  */
 
-int load_dtb(char *name, void *dest, int max_bytes) {
-#if CONFIG_DEVTREE == 1
+/* Reads an opened file and copies it's contents to dest. Reurns 0 on
+   success. If there is a failure, or if the file length is longer
+   than max_bytes, returns -1.  Assumes pf_open was already
+   succesffully called on the file. */
+int load_open_dtb(void *dest, int max_bytes) {
+#if CONFIG_DEVTREE_READ == 1
   FRESULT res = FR_OK;
   unsigned int len;
   unsigned long bytes_read;
-  res = pf_open(name);
-  if (res != FR_OK) {
-    putstr("DTB not found\n");
-    goto err;
-  }
-  char str[32];
-  str[0] = '\0';
-  _strcat(str, "Open "); _strcat(str, name); _strcat(str, " OK");
-  _strcat(str, "\n");
-  putstr(str);
 
   len = pf_size();
   if (len > max_bytes || len == 0) {
@@ -298,10 +292,8 @@ int load_dtb(char *name, void *dest, int max_bytes) {
     goto err;
   }
 
-  putstr("Loaded DTB\n");
   return 0;
  err:
-  putstr("Failed to load DTB\n");
   return -1;
 #else
   return -1;

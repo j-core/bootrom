@@ -170,6 +170,7 @@ typedef enum {
 /*--------------------------------------------------------------*/
 /* Petit FatFs module application interface                     */
 
+FRESULT pf_mount_part (FATFS*, int);	/* Mount/Unmount a particular partition */
 FRESULT pf_mount (FATFS*);		/* Mount/Unmount a logical drive */
 FRESULT pf_open (const char*);		/* Open a file */
 FRESULT pf_size ();			/* Returns the size of an opened file */

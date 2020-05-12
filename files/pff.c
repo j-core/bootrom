@@ -730,8 +730,9 @@ BYTE check_fs (	/* 0:The FAT boot record, 1:Valid boot record but not an FAT, 2:
 /* Mount/Unmount a Locical Drive                                         */
 /*-----------------------------------------------------------------------*/
 
-FRESULT pf_mount (
-	FATFS *fs		/* Pointer to new file system object (NULL: Unmount) */
+FRESULT pf_mount_part (
+	FATFS *fs,		/* Pointer to new file system object (NULL: Unmount) */
+	int part
 )
 {
 	BYTE fmt, buf[36];
@@ -751,8 +752,12 @@ FRESULT pf_mount (
 	bsect = 0;
 	fmt = check_fs(fs, buf, bsect);		/* Check sector 0 as an SFD format */
 	if (fmt == 1) {				/* Not an FAT boot record, it may be FDISK format */
-		/* Check a partition listed in top of the partition table */
-		if (fs->ops.disk_readp(buf, bsect, MBR_Table, 16)) {	/* 1st partition entry */
+		/* Check a slot in the the partition table, #1 if unspecified. */
+		if (part < 1)
+			part = 1;
+		if (part > 4)
+			return FR_NO_FILESYSTEM;
+		if (fs->ops.disk_readp(buf, bsect, MBR_Table + 16*(part-1), 16)) {
 			fmt = 3;
 		} else {
 			if (buf[4]) {				/* Is the partition existing? */
@@ -760,6 +765,9 @@ FRESULT pf_mount (
 				fmt = check_fs(fs, buf, bsect);	/* Check the partition */
 			}
 		}
+	} else if (part > 1) {
+		/* Fail if partition >1 was requested and there's no partition table. */
+		return FR_NO_FILESYSTEM;
 	}
 	if (fmt == 3)
 	       	return FR_DISK_ERR;
@@ -811,6 +819,13 @@ FRESULT pf_mount (
 	FatFs = fs;
 
 	return FR_OK;
+}
+
+FRESULT pf_mount (
+	FATFS *fs		/* Pointer to new file system object (NULL: Unmount) */
+)
+{
+	return pf_mount_part(fs, 0);
 }
 
 /*-----------------------------------------------------------------------*/

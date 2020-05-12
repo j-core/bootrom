@@ -13,6 +13,7 @@ CONFIG_BOOT0=1
 # of the CPU instructions. If any test fails the CPU will enter an
 # infinite loop. If CONFIG_BOOT0=0 then CPU_TEST=1 has no effect.
 CONFIG_CPU_TESTS=1
+CONFIG_CPU_TEST_COPROC=0
 CONFIG_GDB_STUB=1
 CONFIG_LOAD_ELF=1
 CONFIG_LOAD_ELF_TIME=0
@@ -44,7 +45,15 @@ CONFIG_GDB_IO=UART0
 # CONFIG_LIBC_IO = "UART0", "UART1", or "GDB"
 CONFIG_LIBC_IO=UART0
 
-CONFIG_DEVTREE=1
+# Device tree loading
+
+# If CONFIG_DEVTREE_READ=1 then $CONFIG_DEVTREE_FILENAME file will be read from the SD card
+CONFIG_DEVTREE_READ=1
+CONFIG_DEVTREE_FILENAME=dt.dtb
+# Define CONFIG_DEVTREE_ASM_FILE to path of file containing asm output
+# of dtc. If CONFIG_DEVTREE_READ=1 and CONFIG_DEVTREE_ASM_FILE are
+# defined, then $CONFIG_DEVTREE_FILENAME will be loaded if it exists,
+# otherwise the linked in dt will be used
 
 CONFIG_VERSION_DATE=1
 
@@ -109,11 +118,12 @@ CC = $(CROSS_COMPILE)gcc
 LD = $(CROSS_COMPILE)ld
 AR = $(CROSS_COMPILE)ar
 RANLIB = $(CROSS_COMPILE)ranlib
+STRIP = $(CROSS_COMPILE)strip
 LDFLAGS = -T linker/sh32.x
 LIBGCC := $(shell $(CC) -print-libgcc-file-name)
 LIBGCC += $(shell $(CC) -print-file-name=libgcc-Os-4-200.a)
 
-CFLAGS := -m2 -g -Os -Wall -Werror
+CFLAGS := -mj2 -Os -Wall -Werror
 CFLAGS += -std=gnu99
 # Pass CONFIG_ variables to C
 CONF_VARS:=$(filter CONFIG_%,$(.VARIABLES))
@@ -166,7 +176,7 @@ FILES_OBJS += loadelf.o
 FILES_OBJS := $(addprefix files/,$(FILES_OBJS))
 
 TESTS_OBJS := testbra.o
-TESTS_OBJS += testmov.o testmov2.o
+TESTS_OBJS += testmov.o testmov2.o testmov3.o
 TESTS_OBJS += testalu.o
 TESTS_OBJS += testshift.o
 TESTS_OBJS += testmul.o testmulu.o testmuls.o testmull.o testdmulu.o testdmuls.o testmulconf.o
@@ -257,6 +267,9 @@ ifeq ($(CONFIG_GDB_STUB),1)
 	CFLAGS += -Igdb
 endif
 OBJS += $(DEV_OBJS)
+ifneq ($(strip $(CONFIG_DEVTREE_ASM_FILE)),)
+	OBJS += $(CONFIG_DEVTREE_ASM_FILE:.S=.o)
+endif
 CFLAGS += -Idev
 
 ifeq ($(CONFIG_LOAD_ELF),1)
@@ -284,6 +297,7 @@ $(OBJS) $(TESTS_OBJS) $(LIBC_OBJS): config.log
 
 $(BIN_NAME): $(OBJS) $(LIBS) | bin
 	$(LD) $(LDFLAGS) -Map $@.map $^ $(LIBGCC) -o $@
+	$(STRIP) $@
 
 lib/libtests.a: $(TESTS_OBJS)
 
@@ -297,7 +311,7 @@ bin/lcdtest: dev/aqm1248ok.o libc/libsyscall.o lcdtest.o | bin
 # This REVISION value is usually passed in from the soc_hw Makefile so
 # that the tag and commit ID are from soc_hw. Set a default value here
 # that uses the boot repo's values.
-REVISION="open"
+REVISION=$(shell git describe --tags --match 'v[0-9]*')
 
 VERSION_STRING:=revision: $(REVISION)\\\\n
 ifeq ($(CONFIG_VERSION_DATE),1)

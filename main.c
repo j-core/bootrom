@@ -21,6 +21,9 @@
 #if CONFIG_GPS_ROLLOVER_TEST == 1
 #include <stdio.h>
 #endif
+#ifdef DEVICE_CACHE_CTRL_WSBU_ADDR
+#define DEVICE_CACHE_CTRL ((volatile struct cache_ctrl_wsbu_regs *) DEVICE_CACHE_CTRL_WSBU_ADDR)
+#endif
 
 #ifndef MEM_TEST_ADDR
 #define MEM_TEST_ADDR 0x10000000
@@ -35,7 +38,7 @@ extern char version_string[];
 char ram0[256]; /* working ram for CPU tests */
 
 void
-putstr (char *str)
+putstr (const char *str)
 {
   while (*str)
     {
@@ -109,7 +112,96 @@ void memtest2(void) {
 }
 #endif
 
+void * localmemcpy(void * dest, const void *src, unsigned long count) {
+  char *d = (char *) dest;
+  char *s = (char *) src;
+  // TODO: copy a 4 bytes at a time instead of 1 byte?
+  while (count--) {
+    *d++ = *s++;
+  }
+  return dest;
+}
+
 #if CONFIG_LOAD_ELF == 1
+
+/* Copies device tree to dest pointer. Device tree can come from an SD
+   card file if present or be linked into the bootloader. */
+static int prepare_dtb(const char *filename, void *dest) {
+  int result = -1;
+
+#if CONFIG_DEVTREE_READ == 1
+  if (pf_open(filename) == FR_OK) {
+    // 20kB is arbitrary limit to avoid trying to read huge file into memory
+    if (load_open_dtb(dest, 20 * 1024) == 0) {
+      result = 0; // success
+      putstr("Using ");
+      putstr(filename);
+      putstr(" from SD card\n");
+    } else {
+      // file existed, but could not be read
+      putstr("Failed to read ");
+      putstr(filename);
+      putstr("\n");
+    }
+  }
+#endif
+
+#ifdef CONFIG_DEVTREE_ASM_FILE
+  if (result != 0) {
+    extern char dt_blob_start;
+    extern char dt_blob_end;
+    // A device tree was linked into the bootloader starting at
+    // dt_blob_start and ending at dt_blob_end. memcpy it into dram.
+    // TODO: Should we tell the kernel to read it directly from the
+    // boot ROM? Probably not if kernel is not aware of ROM and not
+    // all cpus may be able to read the ROM.
+    putstr("Use bootloader's DTB\n");
+    localmemcpy(dest, &dt_blob_start, &dt_blob_end - &dt_blob_start);
+    result = 0;
+  }
+#endif
+
+  return result;
+}
+
+#ifdef CONFIG_BOOT_ID
+static int simple_strcmp(const char *a, const char *b) {
+  for (; *a && *a==*b; a++, b++);
+  return (unsigned char)*a - (unsigned char)*b;
+}
+#endif
+
+static int select_and_mount_fs(FATFS *fs) {
+#ifdef CONFIG_BOOT_ID
+#define STRINGIFY(x) STRINGIFY2(x)
+#define STRINGIFY2(x) #x
+#define BOOT_ID STRINGIFY(CONFIG_BOOT_ID)
+  char buf[sizeof BOOT_ID], buf2[3];
+  WORD bytes_read;
+  int i, r;
+  buf[sizeof buf - 1] = 0;
+  putstr("Searching for boot id: " BOOT_ID "\n");
+  for (i=2; i<=3; i++) {
+    r = pf_mount_part(fs, i);
+    if (r == FR_OK && pf_open("id") == FR_OK
+        && pf_read(buf, sizeof buf, &bytes_read) == FR_OK
+        && bytes_read >= sizeof buf - 1         /* Reject id file that's too short. */
+        && buf[sizeof buf - 1] < 0x20) {        /* Reject false prefix matches. */
+      buf[sizeof buf - 1] = 0;
+      if (!simple_strcmp(buf, BOOT_ID)) {
+        putstr("Found on partition ");
+        buf2[0] = '0'+i;
+        buf2[1] = '\n';
+        buf2[2] = 0;
+        putstr(buf2);
+        return FR_OK;
+      }
+    }
+  }
+  putstr("Not found; booting partition 1\n");
+#endif
+  return pf_mount(fs);
+}
 
 static int boot_linux(void) {
   FRESULT r;
@@ -118,7 +210,7 @@ static int boot_linux(void) {
   unsigned int dtb_addr;
   putstr("Booting\n");
   loadelf_initfs(&fs);
-  r = pf_mount(&fs);
+  r = select_and_mount_fs(&fs);
   if (r != FR_OK) {
     goto err;
   }
@@ -158,17 +250,18 @@ static int boot_linux(void) {
     unsigned int nsec1;
     rtc_get_time(&sec0, &nsec0);
 #endif
-    // load device tree DTB file
-    if (load_dtb("dt.dtb", (void *) dtb_addr, 20 * 1024) == 0) {
-#if CONFIG_LOAD_ELF_TIME == 1
-      rtc_get_time(&sec1, &nsec1);
-      putstr("Loaded dt.dtb in ");
-      putinterval(sec1 - sec0, nsec1 - nsec0);
-      putstr("\n");
-#endif
-    } else {
+#define XSTR(s) STR(s)
+#define STR(s) #s
+    if (prepare_dtb(XSTR(CONFIG_DEVTREE_FILENAME), (void *) dtb_addr) != 0) {
+      putstr("DTB not found\n");
       dtb_addr = 0;
     }
+#if CONFIG_LOAD_ELF_TIME == 1
+    rtc_get_time(&sec1, &nsec1);
+    putstr("Loaded dtb in ");
+    putinterval(sec1 - sec0, nsec1 - nsec0);
+    putstr("\n");
+#endif
   }
 
   pf_mount(0); // unmount
